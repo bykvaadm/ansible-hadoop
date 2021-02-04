@@ -113,9 +113,3 @@
     line: "{{ hostvars[item].ansible_eth1.ipv4.address }}"
     state: present
   with_items: "{{ groups['all'] }}"
-
-# /opt/hadoop/bin/hdfs namenode -format
-# start:
-# /opt/hadoop/sbin/start-dfs.sh && ./sbin/start-yarn.sh
-# stop:
-# /opt/hadoop/sbin/stop-all.sh
