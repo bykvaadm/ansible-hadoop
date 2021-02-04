@@ -1,0 +1,121 @@
+- name: install jre 11
+  apt:
+    name: openjdk-11-jre
+    state: present
+    install_recommends: no
+
+- name: "ensure hosts file"
+  lineinfile:
+    dest: /etc/hosts
+    regexp: '.*{{ item }}$'
+    line: "{{ hostvars[item].ansible_eth1.ipv4.address }} {{item}}"
+    state: present
+  with_items: "{{ groups['all'] }}"
+
+- name: Manage group
+  group:
+    name: hadoop
+    state: present
+    system: no
+
+- name: Manage user
+  user:
+    createhome: yes
+    group: hadoop
+    home: /opt/hadoop
+    name: hadoop
+    shell: "/bin/bash"
+    state: "present"
+    system: no
+
+- name: ensure public key
+  authorized_key:
+    user: hadoop
+    state: present
+    key: "{{ ssh_public_key }}"
+
+- name: ensure private key
+  copy:
+    dest: /opt/hadoop/.ssh/id_rsa
+    content: "{{ ssh_private_key }}"
+
+- name: download hadoop
+  get_url:
+    url: "https://downloads.apache.org/hadoop/common/hadoop-3.3.0/hadoop-3.3.0-aarch64.tar.gz"
+    dest: "/usr/src/hadoop-3.3.0-aarch64.tar.gz"
+
+- name: get current version
+  shell: JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64 /opt/hadoop/bin/hdfs version
+  register: hadoop_current_version
+  changed_when: false
+
+- name: unarchive hadoop
+  unarchive:
+    src: /usr/src/hadoop-3.3.0-aarch64.tar.gz
+    dest: /opt/hadoop
+    remote_src: true
+    owner: hadoop
+    group: hadoop
+    extra_opts:
+    - '--strip-components=1'
+    exclude:
+    - LICENSE-binary
+    - LICENSE.txt
+    - NOTICE-binary
+    - NOTICE.txt
+    - README.txt
+    - licenses-binary
+    - share/doc
+  when: hadoop_current_version.rc != 0 or not hadoop_version in hadoop_current_version.stdout_lines[0]
+
+- name: ensure folders
+  file:
+    state: directory
+    path: "/var/lib/hdfs/{{ item }}"
+    mode: '0700'
+    owner: hadoop
+    group: hadoop
+  with_items:
+  - namenode
+  - datanode
+
+- name: ensure configuration files
+  copy:
+    src: "{{ item }}"
+    dest: /opt/hadoop/etc/hadoop/
+  with_items:
+  - hadoop-env.sh
+  - hdfs-site.xml
+  - core-site.xml
+  - yarn-site.xml
+  - mapred-site.xml
+  when: ansible_hostname == "namenode-1"
+
+- name: ensure configs on datanodes
+  block:
+  - name: ensure configuration files
+    copy:
+      src: "{{ item }}"
+      dest: "/opt/hadoop/etc/hadoop/{{ item | regex_replace('-datanode','') }}"
+    with_items:
+    - hadoop-env.sh
+    - hdfs-site-datanode.xml
+    - core-site-datanode.xml
+  - name: ensure config templates
+    template:
+      src: yarn-site-datanode.xml.j2
+      dest: /opt/hadoop/etc/hadoop/yarn-site.xml
+  when: inventory_hostname in groups['datanode']
+
+- name: "ensure workers file"
+  lineinfile:
+    dest: /opt/hadoop/etc/hadoop/workers
+    line: "{{ hostvars[item].ansible_eth1.ipv4.address }}"
+    state: present
+  with_items: "{{ groups['all'] }}"
+
+# /opt/hadoop/bin/hdfs namenode -format
+# start:
+# /opt/hadoop/sbin/start-dfs.sh && ./sbin/start-yarn.sh
+# stop:
+# /opt/hadoop/sbin/stop-all.sh
